@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>상품 수집 모니터</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>상품 수집 모니터</h1>
+      <p>바이브코딩대학 · {{ target_site }}</p>
+    </div>
+    <div class="top-actions">
+      <span class="live-dot {% if state.running %}running{% endif %}" id="live-dot"></span>
+      <span id="top-status">{% if state.running %}수집 중…{% else %}{{ state.last_status }}{% endif %}</span>
+      <a class="btn secondary" href="/export.csv">CSV 내려받기</a>
+      {% if manual_refresh %}<button class="btn primary" id="refresh-button">수집 시작</button>{% endif %}
+    </div>
+  </header>
+
+  <main class="page-shell">
+    <section class="stats-grid">
+      <article class="stat-card"><span>수집 상품</span><strong id="stat-active">{{ dashboard.active_count }}</strong><small>누적 {{ dashboard.total_count }}개</small></article>
+      <article class="stat-card"><span>품절</span><strong id="stat-soldout">{{ dashboard.soldout_count }}</strong><small>판매중 기준</small></article>
+      <article class="stat-card"><span>판매 종료</span><strong id="stat-ended">{{ dashboard.ended_count }}</strong><small>목록에서 사라짐</small></article>
+      <article class="stat-card"><span>평균 판매가</span><strong id="stat-avg">{{ dashboard.avg_price|money }}</strong><small>{% if dashboard.min_price is not none %}{{ dashboard.min_price|money }} ~ {{ dashboard.max_price|money }}{% else %}-{% endif %}</small></article>
+      <article class="stat-card"><span>24시간 변경</span><strong id="stat-changes">{{ dashboard.changes_24h }}</strong><small>가격·상태 변동</small></article>
+      <article class="stat-card result-card"><span>마지막 결과</span><strong id="stat-result">{% if state.running %}진행 중{% elif dashboard.last_run %}{{ dashboard.last_run.status }}{% else %}대기{% endif %}</strong><small id="stat-result-sub">신규 {{ state.new_count or 0 }} · 변경 {{ state.updated_count or 0 }}</small></article>
+    </section>
+
+    <section class="progress-wrap {% if not state.running %}hidden{% endif %}" id="progress-wrap">
+      <div class="progress-head">
+        <strong id="progress-label">상품 수집 중</strong>
+        <span id="progress-text">{{ state.processed or 0 }} / {{ state.queued or 0 }} · {{ state.progress_pct or 0 }}%</span>
+      </div>
+      <div class="progress-track"><div class="progress-bar" id="progress-bar" style="width: {{ state.progress_pct or 0 }}%"></div></div>
+      <p id="current-product">{{ state.current_product or '' }}</p>
+    </section>
+
+    <form class="filters" method="get" action="/">
+      <input class="search-input" type="search" name="q" value="{{ q }}" placeholder="상품명 · 설명 검색">
+      <select name="category" aria-label="카테고리">
+        <option value="">전체 카테고리</option>
+        {% for c in categories %}<option value="{{ c }}" {% if category == c %}selected{% endif %}>{{ c }}</option>{% endfor %}
+      </select>
+      <select name="sort" aria-label="정렬">
+        <option value="changed" {% if sort == 'changed' %}selected{% endif %}>최근 변경순</option>
+        <option value="newest" {% if sort == 'newest' %}selected{% endif %}>신규 등록순</option>
+        <option value="price_asc" {% if sort == 'price_asc' %}selected{% endif %}>낮은 가격순</option>
+        <option value="price_desc" {% if sort == 'price_desc' %}selected{% endif %}>높은 가격순</option>
+        <option value="name" {% if sort == 'name' %}selected{% endif %}>상품명순</option>
+      </select>
+      <select name="status" aria-label="판매 상태">
+        <option value="all" {% if status == 'all' %}selected{% endif %}>전체 상태</option>
+        <option value="active" {% if status == 'active' %}selected{% endif %}>판매중</option>
+        <option value="soldout" {% if status == 'soldout' %}selected{% endif %}>품절</option>
+        <option value="ended" {% if status == 'ended' %}selected{% endif %}>판매 종료</option>
+      </select>
+      <input class="price-input" type="number" min="0" name="min_price" value="{{ min_price if min_price is not none else '' }}" placeholder="최소가">
+      <input class="price-input" type="number" min="0" name="max_price" value="{{ max_price if max_price is not none else '' }}" placeholder="최대가">
+      <button class="filter-submit" type="submit">적용</button>
+    </form>
+
+    <section class="content-grid">
+      <div class="products-panel">
+        <div class="section-head"><strong>{{ products|length }}개 상품</strong><a href="{{ target_site }}" target="_blank" rel="noreferrer">원본 쇼핑몰 ↗</a></div>
+        {% if products %}
+        <div class="product-grid" id="product-grid">
+          {% for product in products %}
+          <article class="product-card {% if not product.is_active %}ended-card{% endif %}">
+            <a class="product-image" href="/product/{{ product.id }}">
+              {% if product.image_url %}<img loading="lazy" src="{{ product.image_url }}" alt="{{ product.name }}">{% else %}<div class="no-image">NO IMAGE</div>{% endif %}
+              {% if product.sold_out %}<span class="badge">품절</span>{% elif not product.is_active %}<span class="badge gray">판매 종료</span>{% endif %}
+            </a>
+            <div class="product-body">
+              <p class="category">{{ product.category or '미분류' }}</p>
+              <a class="name" href="/product/{{ product.id }}">{{ product.name }}</a>
+              <div class="price-row"><strong>{{ product.price|money }}</strong>{% if product.original_price and product.original_price != product.price %}<del>{{ product.original_price|money }}</del>{% endif %}</div>
+              <p class="updated">갱신 {{ product.updated_at|relative }}</p>
+            </div>
+          </article>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state" id="empty-state">
+          <div class="loader"></div>
+          <strong>상품을 수집하고 있습니다.</strong>
+          <span>수집되는 즉시 이 화면에 상품이 표시됩니다.</span>
+        </div>
+        {% endif %}
+      </div>
+
+      <aside class="changes-panel">
+        <div class="aside-title">최근 변경 내역</div>
+        <div class="change-list" id="change-list">
+          {% for history, product in recent_changes %}
+          <a class="change-item" href="/product/{{ product.id }}">
+            <div><strong class="change-type">{% if history.change_type == 'new' %}신규 등록{% elif history.change_type == 'ended' %}판매 종료{% elif 'price' in history.change_type %}가격 변경{% elif 'stock' in history.change_type %}상태 변경{% else %}정보 변경{% endif %}</strong><span>{{ history.captured_at|relative }}</span></div>
+            <p>{{ history.name }}</p>
+            <small>{{ history.price|money }}</small>
+          </a>
+          {% endfor %}
+          {% if not recent_changes %}<div class="aside-empty">아직 변경 이력이 없습니다.</div>{% endif %}
+        </div>
+      </aside>
+    </section>
+  </main>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
